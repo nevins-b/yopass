@@ -1,13 +1,5 @@
 var app = angular.module('yopass', ['ngRoute']);
 
-function randomString() {
-    var text = "";
-    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    for(var i=0; i < 16; i++)
-      text += possible.charAt(Math.floor(Math.random() * possible.length));
-    return text;
-}
-
 app.controller('createController', function($scope, $http) {
   $scope.close = function(s) { $scope.full_url = undefined; }
   $scope.save = function(s) {
@@ -17,11 +9,20 @@ app.controller('createController', function($scope, $http) {
     if(s.expiration === undefined) {
       s.expiration = 3600;
     }
-    var decryption_key = randomString();
 
-    encrypted = sjcl.encrypt(decryption_key, s.secret);
+    var message = nacl.util.decodeUTF8(s.secret);
+    var nonce = nacl.util.encodeBase64(nacl.randomBytes(nacl.secretbox.nonceLength));
+    var decryption_key = nacl.util.encodeBase64(nacl.randomBytes(nacl.secretbox.keyLength));
 
-    $http.post('/secret', {secret: encrypted.toString(), expiration: parseInt(s.expiration)})
+    encrypted = nacl.util.encodeBase64(
+      nacl.secretbox(
+        message,
+        nacl.util.decodeBase64(nonce),
+        nacl.util.decodeBase64(decryption_key)
+      )
+    );
+
+    $http.post('/secret', {secret: encrypted.toString(), nonce: nonce.toString(), expiration: parseInt(s.expiration)})
       .success(function(data, status, headers, config) {
         $scope.error = false; //clear errors on success
         $scope.secret = null; //clear secret on success
@@ -29,6 +30,7 @@ app.controller('createController', function($scope, $http) {
         $scope.full_url = base_url+data.key+"/"+decryption_key;
         $scope.short_url = base_url+data.key;
         $scope.decryption_key = decryption_key;
+        $scope.none = nonce;
       })
       .error(function(data, status, headers, config) {
         $scope.error = data.message
@@ -41,12 +43,16 @@ app.controller('ViewController', function($scope, $routeParams, $http) {
     $http.get('/secret/'+$routeParams.key)
       .success(function(data, status, headers, config) {
         $scope.display_form = false;
-        var secret = sjcl.decrypt($decryption_key, data.secret);
-        if(secret == "") {
+        var secret = nacl.secretbox.open(
+          nacl.util.decodeBase64(data.secret),
+          nacl.util.decodeBase64(data.nonce),
+          nacl.util.decodeBase64($decryption_key)
+        );
+        if(secret == "" | !secret) {
           $scope.errorMessage = true;
           return;
         }
-        $scope.secret = secret;
+        $scope.secret = nacl.util.encodeUTF8(secret);
       })
       .error(function(data, status, headers, config) {
         $scope.errorMessage = true;

@@ -29,8 +29,8 @@ type stubNotFoundDB struct {
 	Database
 }
 
-func (stubNotFoundDB) Get(key string) (string, error) {
-	return "", errors.New("memcache: cache miss")
+func (stubNotFoundDB) Get(key string) ([]byte, error) {
+	return []byte{}, errors.New("memcache: cache miss")
 }
 
 func TestMessageNotFoundInMemcached(t *testing.T) {
@@ -54,11 +54,11 @@ type stubFailDB struct {
 	Database
 }
 
-func (stubFailDB) Get(key string) (string, error) {
-	return "", errors.New("terrible failure")
+func (stubFailDB) Get(key string) ([]byte, error) {
+	return []byte{}, errors.New("terrible failure")
 }
 
-func (stubFailDB) Set(key string, value string, expiration int32) error {
+func (stubFailDB) Set(key string, value []byte, expiration int32) error {
 	return errors.New("terrible failure")
 }
 
@@ -83,14 +83,14 @@ type stubDB struct {
 	Database
 }
 
-func (stubDB) Get(key string) (string, error) {
-	return `=AKJF7\sKJFVUA==`, nil
+func (stubDB) Get(key string) ([]byte, error) {
+	return []byte(`{"secret":"Sd1pkiF7jfRKYuampCWoipjmfCY=","nonce":"VuJEGiGSXdY1FX5RMDQVavKcl+jnm1U0","expiration":3600}`), nil
 }
 func (stubDB) Delete(key string) error {
 	return nil
 }
 
-func (stubDB) Set(key string, value string, expiration int32) error {
+func (stubDB) Set(key string, value []byte, expiration int32) error {
 	return nil
 }
 
@@ -109,7 +109,7 @@ func TestGetSuccess(t *testing.T) {
 	if resp.Message != expected {
 		t.Errorf("message is %s should be '%s'", response.Body, expected)
 	}
-	expectedSecret := `=AKJF7\sKJFVUA==`
+	expectedSecret := `Sd1pkiF7jfRKYuampCWoipjmfCY=`
 	if resp.Secret != expectedSecret {
 		t.Errorf("secret is %s should be '%s'", resp.Secret, expectedSecret)
 	}

@@ -15,8 +15,8 @@ import (
 
 // Database interface
 type Database interface {
-	Get(key string) (string, error)
-	Set(key, value string, expiration int32) error
+	Get(key string) ([]byte, error)
+	Set(key string, value []byte, expiration int32) error
 	Delete(key string) error
 }
 
@@ -25,20 +25,20 @@ type memcached struct {
 }
 
 // Get key in memcache
-func (m memcached) Get(key string) (string, error) {
+func (m memcached) Get(key string) ([]byte, error) {
 
 	r, err := m.Client.Get(key)
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	}
-	return string(r.Value), nil
+	return r.Value, nil
 }
 
 // Store key in memcache
-func (m memcached) Set(key, value string, expiration int32) error {
+func (m memcached) Set(key string, value []byte, expiration int32) error {
 	return m.Client.Set(&memcache.Item{
 		Key:        key,
-		Value:      []byte(value),
+		Value:      value,
 		Expiration: expiration})
 }
 
@@ -72,6 +72,7 @@ func saveHandler(response http.ResponseWriter, request *http.Request,
 	decoder := json.NewDecoder(request.Body)
 	var secret struct {
 		Message    string `json:"secret"`
+		Nonce      string `json:"nonce"`
 		Expiration int32  `json:"expiration"`
 	}
 	err := decoder.Decode(&secret)
@@ -85,14 +86,15 @@ func saveHandler(response http.ResponseWriter, request *http.Request,
 		return
 	}
 
-	if len(secret.Message) > 10000 {
+	message, _ := json.Marshal(&secret)
+	if len(message) > 10000 {
 		http.Error(response, `{"message": "Message is too long"}`, http.StatusBadRequest)
 		return
 	}
 
 	// Generate new UUID and store secret in memcache with specified expiration
 	uuid := uuid.NewV4()
-	err = db.Set(uuid.String(), secret.Message, secret.Expiration)
+	err = db.Set(uuid.String(), message, secret.Expiration)
 	if err != nil {
 		http.Error(response, `{"message": "Failed to store secret in database"}`, http.StatusInternalServerError)
 		return
@@ -106,7 +108,7 @@ func saveHandler(response http.ResponseWriter, request *http.Request,
 // Handle GET requests
 func getHandler(response http.ResponseWriter, request *http.Request, db Database) {
 	response.Header().Set("Content-type", "application/json")
-	secret, err := db.Get(mux.Vars(request)["uuid"])
+	data, err := db.Get(mux.Vars(request)["uuid"])
 	if err != nil {
 		if err.Error() == "memcache: cache miss" {
 			http.Error(response, `{"message": "Secret not found"}`, http.StatusNotFound)
@@ -120,7 +122,28 @@ func getHandler(response http.ResponseWriter, request *http.Request, db Database
 	// Delete secret from memcached
 	db.Delete(mux.Vars(request)["uuid"])
 
-	resp := map[string]string{"secret": string(secret), "message": "OK"}
+	var secret struct {
+		Message    string `json:"secret"`
+		Nonce      string `json:"nonce"`
+		Expiration int32  `json:"expiration"`
+	}
+
+	err = json.Unmarshal(data, &secret)
+	if err != nil {
+		http.Error(response, `{"message": "Unable to decode secret"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var resp struct {
+		Secret  string `json:"secret"`
+		Nonce   string `json:"nonce"`
+		Message string `json:"message"`
+	}
+
+	resp.Secret = secret.Message
+	resp.Nonce = secret.Nonce
+	resp.Message = "OK"
+
 	jsonData, _ := json.Marshal(resp)
 	response.Write(jsonData)
 }
